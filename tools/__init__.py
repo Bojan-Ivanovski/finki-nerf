@@ -48,6 +48,12 @@ def load_pixels(filename="pixel_rays.h5", batch_size=1024):
         for i in range(0, total, batch_size):
             batch = dset[i : i + batch_size]  # pyright: ignore
 
+            mask = np.any(batch[:, 6:9] != 0, axis=1)  # pyright: ignore
+            batch = batch[mask]  # pyright: ignore
+
+            if batch.shape[0] == 0:  # pyright: ignore
+                continue
+
             rays = []
             for origin, direction in zip(batch[:, 0:3], batch[:, 3:6]):  # pyright: ignore
                 ray = Ray(origin)
@@ -60,13 +66,12 @@ def load_pixels(filename="pixel_rays.h5", batch_size=1024):
                 )
 
                 stacked = np.stack([points, directions], axis=1)
-
                 rays.append(stacked)
 
             rays = np.stack(rays, axis=0)
 
             yield {
                 "rays": rays,
-                "colors": batch[:, 6:9],  # pyright: ignore
+                "colors": batch[:, 6:9] / 255.0,  # pyright: ignore
                 "coords": batch[:, 9:11],  # pyright: ignore
             }

@@ -82,6 +82,7 @@ def command_train(list_obj, gen_data_obj, data_file, dataset, eager, batch, epoc
                 epochs=epochs,
                 batch_size=batch,
             )
+        model.save("finki_nerf.keras")
 
     return
 
