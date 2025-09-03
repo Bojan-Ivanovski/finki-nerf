@@ -6,6 +6,9 @@ import argparse
 from model import NeRFModel, NeRFModelOptions
 from tools import load_pixels, pixel, save_pixels
 from tools.ray import Ray
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 def list_objects_in_dataset(data_type):
@@ -13,9 +16,9 @@ def list_objects_in_dataset(data_type):
     print("Objects in dataset:", dataset)
 
 
-def generate_object_data(object_to_generate):
+def generate_object_data(object_to_generate, batch):
     obj = SyntheticObject(
-        os.path.join(SYNTHETIC_TRAIN_DATA_PATH, object_to_generate), object_to_generate
+        SYNTHETIC_TRAIN_DATA_PATH, object_to_generate
     )
 
     total_frames = len(obj.frames)
@@ -23,7 +26,7 @@ def generate_object_data(object_to_generate):
         pixels = []
         for n_pixel, pixel in enumerate(frame.list_pixels()):
             pixels.append(pixel)
-            if len(pixels) % 10000 == 0:
+            if len(pixels) % batch == 0:
                 logger.info(
                     "(Frame) %d / %d (Pixel) Processed %d / %d",
                     n_frame + 1,
@@ -33,6 +36,16 @@ def generate_object_data(object_to_generate):
                 )
                 save_pixels(pixels, filename=f"{object_to_generate}.h5")
                 pixels.clear()
+        if frame.get_image_pixel_size() % batch != 0:
+            logger.info(
+                        "(Frame) %d / %d (Pixel) Processed %d / %d",
+                        n_frame + 1,
+                        total_frames,
+                        n_pixel + 1,
+                        frame.get_image_pixel_size(),
+                    )
+            save_pixels(pixels, filename=f"{object_to_generate}.h5")
+            pixels.clear()
 
 
 def model_init(
@@ -52,6 +65,7 @@ def command_train(list_obj, gen_data_obj, data_file, dataset, eager, batch, epoc
     # TODO : Name Argument for model
     # TODO : Check for existing file
     # TODO : Add printable data option from data file
+    # TODO : Add new parametar for randomness of background
 
     logger.debug(
         "(CLI) Input: %s %s %s %s %s %s %s",
@@ -69,7 +83,7 @@ def command_train(list_obj, gen_data_obj, data_file, dataset, eager, batch, epoc
         exit(0)
 
     if gen_data_obj:
-        generate_object_data(gen_data_obj)
+        generate_object_data(gen_data_obj, batch)
         exit(0)
 
     if data_file:

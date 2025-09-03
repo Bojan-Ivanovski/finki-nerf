@@ -1,5 +1,6 @@
 import os
 
+
 DEFAULT_DATA_PATH = "./data"
 
 DEFAULT_SYNTHETIC_TRAIN_DATA_PATH = os.path.join(DEFAULT_DATA_PATH, "train_dataset_synthetic")

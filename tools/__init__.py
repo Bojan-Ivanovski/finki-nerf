@@ -40,7 +40,7 @@ def save_pixels(pixels: List, filename="pixel_rays.h5"):
         dset[old_size:new_size] = rays  # pyright: ignore
 
 
-def load_pixels(filename="pixel_rays.h5", batch_size=1024):
+def load_pixels(filename="pixel_rays.h5", batch_size=1024, bg_keep_prob=0.5):
     with h5py.File(filename, "r") as f:
         dset = f["rays"]
         total = dset.shape[0]  # pyright: ignore
@@ -48,8 +48,11 @@ def load_pixels(filename="pixel_rays.h5", batch_size=1024):
         for i in range(0, total, batch_size):
             batch = dset[i : i + batch_size]  # pyright: ignore
 
-            mask = np.any(batch[:, 6:9] != 0, axis=1)  # pyright: ignore
-            batch = batch[mask]  # pyright: ignore
+            is_foreground = np.any(batch[:, 6:9] != 0, axis=1)  # pyright: ignore
+            is_background = ~is_foreground
+            bg_mask = np.random.rand(batch.shape[0]) < bg_keep_prob
+            keep_mask = is_foreground | (is_background & bg_mask)
+            batch = batch[keep_mask]  # pyright: ignore
 
             if batch.shape[0] == 0:  # pyright: ignore
                 continue
@@ -75,3 +78,4 @@ def load_pixels(filename="pixel_rays.h5", batch_size=1024):
                 "colors": batch[:, 6:9] / 255.0,  # pyright: ignore
                 "coords": batch[:, 9:11],  # pyright: ignore
             }
+
