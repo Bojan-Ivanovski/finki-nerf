@@ -1,6 +1,8 @@
 import os
 import json
 
+import numpy as np
+
 from logs import logger
 from skimage import io
 from data import (
@@ -67,7 +69,8 @@ class SyntheticFrame:
         )
         logger.debug("Camera origin: %s", list(self.camera_origin))
         logger.debug("Camera rotation matrix: %s", list(self.camera_orientation))
-        self.image = io.imread(self.path)
+        if "boilerplate" not in self.path:
+            self.image = io.imread(self.path)
 
     def get_image_pixel_size(self):
         return self.image.shape[0] * self.image.shape[1]
@@ -83,3 +86,23 @@ class SyntheticFrame:
                 ray.compute_direction(pixel_direction, self.camera_orientation)
                 pixel.assign_ray(ray)
                 yield pixel
+
+    def generate_pixels(self, width, height):
+        for x in range(height):
+            for y in range(width):
+                ray = Ray(self.camera_origin)
+                pixel = FramePixel(x, y, np.array([0.0,0.0,0.0]))
+                pixel_direction = pixel.calculate_pixel_direction(
+                    self.camera_fov, width, height
+                )
+                ray.compute_direction(pixel_direction, self.camera_orientation)
+                pixel.assign_ray(ray)
+                yield pixel
+
+    def __str__(self):
+        return self.path
+    
+    def __repr__(self):
+        return self.path
+
+

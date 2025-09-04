@@ -4,6 +4,7 @@ from tensorflow import Tensor
 import tensorflow as tf
 from logs import logger
 from logging import INFO, DEBUG
+import numpy as np
 
 
 class NeRFModelOptions:
@@ -33,67 +34,52 @@ class NeRFModel(Model):
         super().__init__()
         self.options = options
 
-        self.density_layers = []
-        self.color_layers = []
+        self.density_layers = [
+            Dense(self.options.neurons_per_layer, activation=self.options.activation, name=f"density_layer_{i}")
+            for i in range(self.options.hidden_layers[0])
+        ]
+        self.density_output = Dense(1, activation="relu", name="density_output")
+        self.density_feature = Dense(self.options.neurons_per_layer, name="density_feature")
 
-        for layer_n in range(self.options.hidden_layers[0]):
-            layer = Dense(
-                self.options.neurons_per_layer, activation=self.options.activation
-            )
-            layer.name = f"density_layer_{layer_n}"
-            self.density_layers.append(layer)
-
-        self.density_output = Dense(1)
-        self.density_feature = Dense(self.options.neurons_per_layer)
-
-        for layer_n in range(self.options.hidden_layers[1]):
-            layer = Dense(
-                self.options.neurons_per_layer, activation=self.options.activation
-            )
-            layer.name = f"color_layer_{layer_n}"
-            self.color_layers.append(layer)
-
-        self.color_output = Dense(3, activation="sigmoid")
+        self.color_layers = [
+            Dense(self.options.neurons_per_layer, activation=self.options.activation, name=f"color_layer_{i}")
+            for i in range(self.options.hidden_layers[1])
+        ]
+        self.color_output = Dense(3, activation="sigmoid", name="color_output")
 
     def call(self, input: Tensor):
         return self._calculate_ray(input)
 
     def _calculate_ray(self, input: Tensor):
-        if (
-            len(input.shape) != 3
-            and input._shape_as_list()[0] < 1  # type: ignore
-            and input._shape_as_list()[1] != 2  # type: ignore
-            and input._shape_as_list()[2] != 3  # type: ignore
-        ):
-            raise ValueError(f"Input shape must be (N, 2, 3), got {input.shape}")
         self.options.log(f"Input shape: {input.shape}", DEBUG)
         self.options.log(f"Input: {input}", DEBUG)
-        points = self._calculate_points(input)
-        self.options.log(f"Points : {points}", DEBUG)
-        colors = self._render_pixel_color(points[0], points[1], 0.0625)
-        self.options.log(f"Final Collors : {colors}", DEBUG)
-        return colors
+        densities, colors = self._calculate_points(input)
+        self.options.log(f"Densities: {densities.shape}", DEBUG)
+        self.options.log(f"Colors: {colors.shape}", DEBUG)
+        rgb_map = self._render_pixel_color(densities, colors, 0.0625)
+        self.options.log(f"Final RGB map: {rgb_map}", DEBUG)
+        return rgb_map
+
 
     def _calculate_points(self, input: Tensor):
-        split_tensor = tf.unstack(input, axis=-2)
-        point, ray_direction = split_tensor[0], split_tensor[1]  # pyright: ignore
+        point, ray_direction = tf.unstack(input, axis=-2)
         self.options.log(f"Point: {point}", DEBUG)
         self.options.log(f"Ray Dirrection: {ray_direction}", DEBUG)
-        density, density_feature = self._calculate_density(point)
-        color_ouput = self._calculate_color(
-            tf.concat([density_feature, ray_direction], axis=-1)
+        density, density_feature = self._calculate_density(self._positional_encoding(point, 10))
+        color_output = self._calculate_color(
+            tf.concat([density_feature, self._positional_encoding(ray_direction, 4)], axis=-1)
         )
-        density = tf.nn.relu(density)
-        return density, color_ouput
+        return density, color_output
 
-    def _calculate_density(self, x):
+
+    def _calculate_density(self, x: Tensor):
         for layer in self.density_layers:
             x = layer(x)
         density = self.density_output(x)
         features = self.density_feature(x)
         return density, features
 
-    def _calculate_color(self, x):
+    def _calculate_color(self, x: Tensor):
         for layer in self.color_layers:
             x = layer(x)
         color = self.color_output(x)
@@ -105,3 +91,10 @@ class NeRFModel(Model):
         weights = alphas * transmittance
         rgb_map = tf.reduce_sum(weights * colors, axis=1)
         return rgb_map
+    
+    def _positional_encoding(self, x, L):
+        encodings = []
+        for i in range(L):
+            for fn in [tf.sin, tf.cos]:
+                encodings.append(fn((2.0 ** i) * np.pi * x))
+        return tf.concat(encodings, axis=-1)
