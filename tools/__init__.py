@@ -102,8 +102,15 @@ def generate_image_from_boilerplate(model : Model, filename="blank_image.h5", ba
         rays = batch["rays"]        # (B, S, 2, 3)
         coords = batch["coords"].astype(int)
         pred = model.predict(rays, verbose=0) 
+        
+        # Handle hierarchical model output (returns dict) vs single model output
+        if isinstance(pred, dict):
+            # Use fine network output for final image
+            colors = pred['fine_rgb']
+        else:
+            colors = pred
 
-        for (x, y), color in zip(coords, pred):
+        for (x, y), color in zip(coords, colors):
             if 0 <= x < width and 0 <= y < height:
                 img[y, x] = color  # keep values in [0,1]
 

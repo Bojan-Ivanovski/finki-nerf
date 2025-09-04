@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 import numpy as np
 from keras.callbacks import ModelCheckpoint
 from composer import generate_camera_options, create_boilerplate
-
+import tensorflow as tf
 
 load_dotenv()
 
@@ -55,10 +55,42 @@ def model_init(eager) -> NeRFModel:
     options.set_eager(eager)
     options.set_hidden_layers(4, 4)
     model = NeRFModel(options)
-    dummy_input = np.zeros((1, 1, 1, 2, 3), dtype=np.float32)  
+    
+    # Create appropriate dummy input based on hierarchical sampling
+    if options.hierarchical_sampling:
+        # Need more samples for hierarchical sampling
+        total_samples = options.n_coarse_samples + options.n_fine_samples  # 64 + 128 = 192
+        dummy_input = np.zeros((1, total_samples, 2, 3), dtype=np.float32)
+    else:
+        dummy_input = np.zeros((1, 64, 2, 3), dtype=np.float32)  # Default sample count
+    
     _ = model(dummy_input)
-    model.compile(optimizer="adam", loss="mse")
+    
+    if options.hierarchical_sampling:
+        # Custom training setup for hierarchical model
+        optimizer = tf.keras.optimizers.Adam(learning_rate=5e-4)
+        model.optimizer = optimizer
+    else:
+        model.compile(optimizer="adam", loss="mse")
+    
     return model
+
+@tf.function
+def train_step_hierarchical(model, rays, colors):
+    """Custom training step for hierarchical NeRF"""
+    with tf.GradientTape() as tape:
+        outputs = model(rays, training=True)
+        
+        # Calculate losses for both coarse and fine networks
+        coarse_loss = tf.reduce_mean(tf.square(outputs['coarse_rgb'] - colors))
+        fine_loss = tf.reduce_mean(tf.square(outputs['fine_rgb'] - colors))
+        total_loss = coarse_loss + fine_loss
+        
+    # Compute gradients and update weights
+    gradients = tape.gradient(total_loss, model.trainable_variables)
+    model.optimizer.apply_gradients(zip(gradients, model.trainable_variables))
+    
+    return total_loss, coarse_loss, fine_loss
 
 def train_on_data(model_name, data, batch_size, sample_size, epoch, eager):
     model : NeRFModel = model_init(eager)
@@ -68,18 +100,53 @@ def train_on_data(model_name, data, batch_size, sample_size, epoch, eager):
         else:
             exit(0)
 
-    checkpoint = ModelCheckpoint(
-        filepath=model_name,
-        save_weights_only=True
-    )
-
     def pixel_data_generator(rm_bg):
         while True:  
             for pixel_data in load_pixels(data, batch_size=sample_size, shuffle=True, remove_bg=rm_bg):
                 yield pixel_data["rays"], pixel_data["colors"]
 
-    model.fit(pixel_data_generator(rm_bg=True), steps_per_epoch=batch_size, epochs=epoch//2, callbacks=[checkpoint])
-    model.fit(pixel_data_generator(rm_bg=False), steps_per_epoch=batch_size, epochs=epoch//2, callbacks=[checkpoint])
+    if model.options.hierarchical_sampling:
+        # Custom training loop for hierarchical model
+        logger.info("Starting hierarchical NeRF training...")
+        
+        for epoch_num in range(epoch):
+            epoch_loss = 0
+            step_count = 0
+            
+            data_gen = pixel_data_generator(rm_bg=(epoch_num < epoch//2))
+            
+            for step in range(batch_size):
+                rays, colors = next(data_gen)
+                
+                total_loss, coarse_loss, fine_loss = train_step_hierarchical(
+                    model, rays, colors
+                )
+                
+                epoch_loss += total_loss
+                step_count += 1
+                
+                if step % 100 == 0:
+                    logger.info(f"Epoch {epoch_num+1}/{epoch}, Step {step}: Total Loss = {total_loss:.6f}, Coarse = {coarse_loss:.6f}, Fine = {fine_loss:.6f}")
+            
+            # Save weights periodically
+            if (epoch_num + 1) % 10 == 0:
+                model.save_weights(model_name)
+                logger.info(f"Saved model weights at epoch {epoch_num+1}")
+                
+        # Final save
+        model.save_weights(model_name)
+        logger.info("Training completed!")
+        
+    else:
+        # Original training for single network
+        checkpoint = ModelCheckpoint(
+            filepath=model_name,
+            save_weights_only=True
+        )
+        
+        model.fit(pixel_data_generator(rm_bg=True), steps_per_epoch=batch_size, epochs=epoch//2, callbacks=[checkpoint])
+        model.fit(pixel_data_generator(rm_bg=False), steps_per_epoch=batch_size, epochs=epoch//2, callbacks=[checkpoint])
+    
     return model
 
 
